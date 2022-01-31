@@ -12,13 +12,46 @@ sid = SentimentIntensityAnalyzer()
 # place Bearer in environment variable or somewhere else secure
 
 
-# Include sanitation of query before running through functions
-# place Bearer in environment variable or somewhere else secure
+dummy = pd.DataFrame({'id': 0, 'text':'', 'created_at': pd.to_datetime("01/01/2001", infer_datetime_format=True), 'retweet_count': 0,
+                      'reply_count': 0, 'like_count': 0, 'quote_count': 0, 'place_id': np.NaN, 'Language': '', 'Tags' : [['#', '#']],
+                      'CleanText': '', 'Targeted @': [['@', '@']], 'Tweet Url': '', 'SentimentScore': 0.25}, index=[0])
 
 
-def GetRecentTweets(rawquery, next_token=""):
+def lambda_handler(rawquery, BearerToken, amountofruns=10):
+    json = GetTweets(rawquery, amountofruns, BearerToken)
+    return json
+
+
+def GetTweets(rawquery, amountofruns, BearerToken):
+    """Main Function, returns dataframe and response code in json format"""
+    dataframelist = []
+    token = ""
+    for i in range(amountofruns):
+        if i != 0 and token == "":
+            DataFrame, FinalResponse = FinaliseData(dataframelist)
+            return {'Data': DataFrame, 'Response': FinalResponse}
+        else:
+            try:
+                tries = 0
+                df, token, response = TidyResponse(GetRecentTweets(rawquery, token, BearerToken))
+                while int(str(response.status_code)[0]) == 5 & tries < 4:
+                    tries += 1
+                    df, token, response = TidyResponse(GetRecentTweets(rawquery, token, BearerToken))
+                if tries >= 4:
+                    DataFrame, FinalResponse = FinaliseDataError(dataframelist, "Twitter server currently not responding", response.status_code)
+                    return {'Data': DataFrame, 'Response': FinalResponse}
+                dataframelist.append(df)
+            except Exception as e:
+                print(f" GetTweets {e}")
+                DataFrame, FinalResponse = FinaliseDataError(dataframelist, e)
+                return {'Data': DataFrame, 'Response': FinalResponse}
+    DataFrame, FinalResponse = FinaliseData(dataframelist)
+    return {'Data': DataFrame, 'Response': FinalResponse}
+
+
+def GetRecentTweets(rawquery, BearerToken, next_token=""):
     query = urllib.parse.quote(rawquery)
-    header={'Authorization': 'Bearer AAAAAAAAAAAAAAAAAAAAAL0gWwEAAAAAI%2FO2HFba9gEFrS4cUxbjSHtqSG0%3D9G658TlsZLrNl2PSNxJZJBKlvhqeQMHYm1NcveXawgzHPvrbJT'}
+    header={'Authorization': f'Bearer {BearerToken}'}
     querystring=f'query={query}&tweet.fields=created_at,public_metrics,geo&max_results=100'
     token = f"next_token={next_token}&" if next_token != "" else ""
     response = r.get(f"https://api.twitter.com/2/tweets/search/recent?{token}{querystring}", headers=header, timeout=2)
@@ -34,16 +67,39 @@ def TidyResponse(response):
             details = data.pop('public_metrics')
             geo = data.pop('geo') if 'geo' in data else {'place_id': np.NaN}
             cleaned = {**data, **details, **geo}
-            cleaneddata.appened(cleaned)
+            cleaneddata.append(cleaned)
         return (pd.DataFrame(cleaneddata), token, response)
-    except:
-        return (pd.DataFrame({'id': np.NaN, 'text': np.NaN}, index=[0]), "", response)
-    
+    except Exception as e:
+        print(f"tidy response, {e}")
+        return (pd.DataFrame({'id': np.NaN, 'text': ''}, index=[0]), "", response)
 
-def DetectLang(df):
-    """ detects language of each tweet using a python port of Nakatani Shuyo s language-detection library"""
-    df["Language"] = df["CleanText"].apply(lambda x: detect(x))
-    return df
+
+def FinaliseData(dataframelist):
+    """ return dataframe in json format and return response containing a status code and text in json """
+    df = pd.concat(dataframelist)
+    length = len(df.index)
+    if length == 0:
+        return df.to_json(orient="records"), "404, There are no recent tweets with the chosen parameters."
+    df = pd.concat([df, CleanText(df["text"])], axis=1)
+    df = DetectLang(df)
+    df = GetSentiment(df)
+    return df.to_json(orient="records"), f"200, {len(df[df['Language'] == 'en'])} English Tweets out of {len(df)} Multi-Lingual Tweets categorised"
+
+
+def FinaliseDataError(dataframelist, Exception, response=0):
+    """ return dataframe in json format and return response containing a status code and text in json """
+    try:
+        df = pd.concat(dataframelist)
+    except:
+        return dummy.to_json(orient="records"), f"{response.status_code}, unfortunately we ran into an error and couldn't get data before this happened, please try again with different paremeters"
+    df = pd.concat([df, CleanText(df["text"])], axis=1)
+    df = DetectLang(df)
+    df = GetSentiment(df)
+    if int(str(response.status_code)[0]) == 5:
+        response = f"{response.status_code}, Twitter server currently not responding, however we managed to get {len(df[df['Language'] == 'en'])} English Tweets out of {len(df)} Multi-Lingual Tweets categorised before hand"
+    else:
+        response = f"500, Unknow Error encountered, however we managed to get {len(df[df['Language'] == 'en'])} English Tweets out of {len(df)} Multi-Lingual Tweets categorised before hand"
+    return df.to_json(orient="records"), response    
 
 
 def CleanText(x: pd.Series):
@@ -71,56 +127,20 @@ def CleanText(x: pd.Series):
     return pd.concat(dfs)
 
 
+def DetectLang(df):
+    """ detects language of each tweet using a python port of Nakatani Shuyo’s language-detection library"""
+    df["Language"] = df["CleanText"].apply(lambda x: detect(x))
+    return df
+
 
 def GetSentiment(df):
     df.loc[df["Language"] == "en", "SentimentScore"] = df.loc[df["Language"] == "en", "CleanText"].apply(lambda x: sid.polarity_scores(x)["compound"])
     return df
 
-
-def FinaliseData(dataframelist):
-    """ return dataframe in json format and return response containing a status code and text in json """
-    df = pd.concat(dataframelist)
-    length = len(df.index)
-    if length == 0:
-        return df.to_json(orient="records"), 404, "There are no recent tweets with the chosen parameters."
-    df = pd.concat([df, CleanText(df["text"])], axis=1)
-    df = DetectLang(df)
-    df = GetSentiment(df)
-    return df.to_json(orient="records"), 200, f"{len(df[df['Language'] == 'en'])} English Tweets out of 1000 Multi-Lingual Tweets categorised"
-    
-      
-def FinaliseDataError(dataframelist, Exception, response=0):
-    pass
-
-
-def GetTweets(rawquery, amountofruns=10):
-    """Main Function, returns dataframe and response code in json format"""
-    dataframelist = []
-    token = ""
-    for i in range(amountofruns):
-        if i != 0 & token == "":
-            DataFrame, code, FinalResponse = FinaliseData(dataframelist)
-            return {'Data': DataFrame, 'Status Code': code, 'Response': FinalResponse}
-        else:
-            try:
-                tries = 0
-                df, token, response = TidyResponse(GetRecentTweets(rawquery, token))
-                while int(str(response.status_code)[0]) == 5 & tries < 4:
-                    tries += 1
-                    df, token, response = TidyResponse(GetRecentTweets(rawquery, token))
-                if tries == 3:
-                    DataFrame, code, FinalResponse = FinaliseDataError(dataframelist, "Twitter server currently not responding", response.status_code)
-                    return {'Data': DataFrame, 'Status Code': code, 'Response': FinalResponse}
-                dataframelist.append(df)
-            except Exception as e:
-                DataFrame, code, FinalResponse = FinaliseDataError(dataframelist, e)
-                return {'Data': DataFrame, 'Status Code': code, 'Response': FinalResponse}
-    DataFrame, code, FinalResponse = FinaliseData(dataframelist)
-    return {'Data': DataFrame, 'Status Code': code, 'Response': FinalResponse}
     
     
-def lambda_handler(rawquery):
-    json = GetTweets(rawquery)
-    return json
+
+
+
     
     
