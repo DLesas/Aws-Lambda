@@ -41,7 +41,7 @@ def TidyResponse(response):
     
 
 def DetectLang(df):
-    """ detects language of each tweet using a python port of Nakatani Shuyo’s language-detection library"""
+    """ detects language of each tweet using a python port of Nakatani Shuyo s language-detection library"""
     df["Language"] = df["CleanText"].apply(lambda x: detect(x))
     return df
 
