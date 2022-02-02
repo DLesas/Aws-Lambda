@@ -1,3 +1,4 @@
+import os
 import requests as r
 import pandas as pd
 import numpy as np
@@ -11,14 +12,13 @@ sid = SentimentIntensityAnalyzer()
 # Include sanitation of query before running through functions
 # place Bearer in environment variable or somewhere else secure
 
-
 dummy = pd.DataFrame({'id': 0, 'text':'', 'created_at': pd.to_datetime("01/01/2001", infer_datetime_format=True), 'retweet_count': 0,
                       'reply_count': 0, 'like_count': 0, 'quote_count': 0, 'place_id': np.NaN, 'Language': '', 'Tags' : [['#', '#']],
                       'CleanText': '', 'Targeted @': [['@', '@']], 'Tweet Url': '', 'SentimentScore': 0.25}, index=[0])
 
 
-def lambda_handler(rawquery, BearerToken, amountofruns=10):
-    json = GetTweets(rawquery, amountofruns, BearerToken)
+def lambda_handler(rawquery, amountofruns=10):
+    json = GetTweets(rawquery, amountofruns, os.environ.get('Twitter'))
     return json
 
 
@@ -136,9 +136,6 @@ def DetectLang(df):
 def GetSentiment(df):
     df.loc[df["Language"] == "en", "SentimentScore"] = df.loc[df["Language"] == "en", "CleanText"].apply(lambda x: sid.polarity_scores(x)["compound"])
     return df
-
-    
-    
 
 
 
