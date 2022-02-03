@@ -17,8 +17,13 @@ dummy = pd.DataFrame({'id': 0, 'text':'', 'created_at': pd.to_datetime("01/01/20
                       'CleanText': '', 'Targeted @': [['@', '@']], 'Tweet Url': '', 'SentimentScore': 0.25}, index=[0])
 
 
-def lambda_handler(rawquery, amountofruns=10):
-    json = GetTweets(rawquery, amountofruns, os.environ.get('Twitter'))
+def lambda_handler(event, context):
+    response = main(event["body"])
+    return response
+
+
+def main(rawquery, amountofruns=10):
+    json = GetTweets(rawquery, amountofruns, os.environ.get('TwitterBearer'))
     return json
 
 
@@ -91,7 +96,7 @@ def FinaliseDataError(dataframelist, Exception, response=0):
     try:
         df = pd.concat(dataframelist)
     except:
-        return dummy.to_json(orient="records"), f"{response}, unfortunately we ran into an error and couldn't get data before this happened, please try again with different paremeters"
+        return dummy.to_json(orient="records"), f"{response.status_code}, unfortunately we ran into an error and couldn't get data before this happened, please try again with different paremeters"
     df = pd.concat([df, CleanText(df["text"])], axis=1)
     df = DetectLang(df)
     df = GetSentiment(df)
